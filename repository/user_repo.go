@@ -1,4 +1,4 @@
-package main
+package repository
 
 import (
 	"database/sql"
@@ -37,4 +37,28 @@ func (r *UserRepo) FetchUser() ([]model.User, error) {
 	}
 
 	return users, nil
+}
+
+func (r *UserRepo) FetchUserLogin(username, password string) (*model.User, error) {
+	preparedStatement := `
+	SELECT 
+	    *
+	FROM 
+		users WHERE username = ? AND password = ?`
+
+	row := r.db.QueryRow(preparedStatement, username, password)
+	var user model.User
+	err := row.Scan(
+		&user.ID,
+		&user.Name,
+		&user.Username,
+		&user.Password,
+		&user.Email,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
 }

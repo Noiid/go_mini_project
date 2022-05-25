@@ -98,7 +98,7 @@ func Rollback(db *sql.DB) {
 }
 
 // Jalankan main untuk melakukan migrasi database
-func main() {
+func main2() {
 	db, err := Migrate()
 	if err != nil {
 		panic(err)

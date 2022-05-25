@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	repo_user "jwt/repository/user_repo"
+	"jwt/model"
+	"jwt/repository"
 
 	jwt "github.com/golang-jwt/jwt/v4"
 	_ "github.com/mattn/go-sqlite3"
@@ -38,6 +37,10 @@ func main() {
 
 	mux.HandleFunc("/login", handlerLogin)
 	mux.HandleFunc("/index", handlerIndex)
+	mux.HandleFunc("/showMhs", handlerShowMhs)
+	mux.HandleFunc("/createMhs", handlerCreateMhs)
+	mux.HandleFunc("/updateMhs", handlerUpdateMhs)
+	mux.HandleFunc("/deleteMhs", handlerDeleteMhs)
 
 	server := new(http.Server)
 	server.Handler = mux
@@ -51,6 +54,109 @@ func handlerIndex(w http.ResponseWriter, r *http.Request) {
 	userInfo := r.Context().Value("userInfo").(jwt.MapClaims)
 	message := fmt.Sprintf("hello %s with email : %s", userInfo["Username"], userInfo["Email"])
 	w.Write([]byte(message))
+}
+
+func handlerShowMhs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Unsupported http method", http.StatusBadRequest)
+		return
+	}
+	db, err := sql.Open("sqlite3", "./mini_project.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	mhsRepo := repository.NewMhsRepository(db)
+	mahasiswas, err := mhsRepo.FetchMhs()
+	if err != nil {
+		panic(err)
+	}
+
+	result, err := json.MarshalIndent(mahasiswas, "", "\t")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Write(result)
+}
+
+func handlerUpdateMhs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "PUT" {
+		http.Error(w, "Unsupported http method", http.StatusBadRequest)
+		return
+	}
+	db, err := sql.Open("sqlite3", "./mini_project.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	var mhs model.Mahasiswa
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprint("read body error: ", err.Error()), http.StatusInternalServerError)
+		return
+	}
+	err = json.Unmarshal(body, &mhs)
+	if err != nil {
+		http.Error(w, fmt.Sprint("JSON encode error: ", err.Error()), http.StatusInternalServerError)
+		return
+	}
+	err = repository.NewMhsRepository(db).UpdateMhs(mhs)
+	if err != nil {
+		http.Error(w, "Input Gagal!", http.StatusBadRequest)
+	}
+	w.Write([]byte("Data berhasil diubah!"))
+
+}
+
+func handlerDeleteMhs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "DELETE" {
+		http.Error(w, "Unsupported http method", http.StatusBadRequest)
+		return
+	}
+	id := r.FormValue("id")
+	db, err := sql.Open("sqlite3", "./mini_project.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	err = repository.NewMhsRepository(db).DeleteMhsByNIM(id)
+	if err != nil {
+		http.Error(w, "Delete Gagal!", http.StatusBadRequest)
+	}
+	w.Write([]byte("Data berhasil dihapus!"))
+
+}
+
+func handlerCreateMhs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Unsupported http method", http.StatusBadRequest)
+		return
+	}
+	db, err := sql.Open("sqlite3", "./mini_project.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	var mhs model.Mahasiswa
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprint("read body error: ", err.Error()), http.StatusInternalServerError)
+		return
+	}
+	err = json.Unmarshal(body, &mhs)
+	if err != nil {
+		http.Error(w, fmt.Sprint("JSON encode error: ", err.Error()), http.StatusInternalServerError)
+		return
+	}
+	resultID, err := repository.NewMhsRepository(db).CreateMhs(mhs)
+	if err != nil {
+		http.Error(w, "Input Gagal!", http.StatusBadRequest)
+	}
+	concatenated := fmt.Sprintf("ID : %d berhasil ditambahkan!", resultID)
+	w.Write([]byte(concatenated))
+
 }
 func handlerLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -67,15 +173,17 @@ func handlerLogin(w http.ResponseWriter, r *http.Request) {
 	ok, userInfo := authenticateUser(username, password)
 	if !ok {
 		http.Error(w, "Invalid username or password", http.StatusBadRequest)
+		return
 	}
+	fmt.Println(userInfo)
 
 	claims := MyClaims{
 		StandardClaims: jwt.StandardClaims{
 			Issuer:    APPLICATION_NAME,
 			ExpiresAt: time.Now().Add(LOGIN_EXPIRATION_TIME).Unix(),
 		},
-		Username: userInfo["username"].(string),
-		Email:    userInfo["email"].(string),
+		Username: userInfo["Username"].(string),
+		Email:    userInfo["Email"].(string),
 	}
 
 	token := jwt.NewWithClaims(
@@ -95,29 +203,27 @@ func handlerLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func authenticateUser(username, password string) (bool, M) {
-	basePath, _ := os.Getwd()
-	dbPath := filepath.Join(basePath, "users.json")
-	buf, _ := ioutil.ReadFile(dbPath)
-
-	data := make([]M, 0)
-	err := json.Unmarshal(buf, &data)
-	if err != nil {
-		return false, nil
-	}
-
-	db, err := sql.Open("sqlite3", "./example.db")
+	db, err := sql.Open("sqlite3", "./mini_project.db")
 	if err != nil {
 		panic(err)
 	}
 	defer db.Close()
 
-	userRepo := repo_user.NewUserRepository(db)
-	users := userRepo.FetchUser()
+	userRepo := repository.NewUserRepository(db)
+	user, err := userRepo.FetchUser()
+	if err != nil {
+		panic(err)
+	}
 
-	res := gubrak.From(users).Find(func(each M) bool {
+	data := make([]M, 0)
+	inrec, _ := json.Marshal(user)
+	json.Unmarshal(inrec, &data)
+
+	res := gubrak.From(data).Find(func(each M) bool {
 		return each["Username"] == username && each["Password"] == password
 	}).Result()
 
+	// panic(res != nil)
 	if res != nil {
 		resM := res.(M)
 		delete(resM, "Password")
